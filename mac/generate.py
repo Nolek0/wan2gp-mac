@@ -19,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description="Text-to-video on Apple Silicon (Wan 2.1 1.3B through WanGP).")
     parser.add_argument("prompt", help="what the video shows (English works best)")
     parser.add_argument("--seconds", type=float, default=5, help="video length, up to 5 s (default 5)")
-    parser.add_argument("--preset", choices=["quality", "high", "draft"], default="quality")
+    parser.add_argument("--preset", choices=["quality", "high", "draft", "hd"], default="quality")
     parser.add_argument("--seed", type=int, default=-1, help="-1 for a random seed")
     parser.add_argument("--out", default=None, help="output folder (default: outputs/)")
     parser.add_argument("--offline", action="store_true", help="never download anything")

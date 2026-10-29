@@ -22,13 +22,33 @@ FILES = [
 ]
 
 
+# --hd: Wan 2.2 TI2V 5B (int8), its decoder and the FastWan 3-step accelerator (about 8.7 GB more) for the "hd" preset.
+HD_FILES = [
+    ("loras_accelerators/Wan2_2_5B_FastWanFullAttn_lora_rank_128_bf16.safetensors", "loras/wan_5B"),
+    ("Wan2.2_VAE.safetensors", "ckpts"),
+    ("wan2.2_text2video_5B_quanto_mbf16_int8.safetensors", "ckpts"),
+]
+HD_REPO = "DeepBeepMeep/Wan2.2"
+
+
 def main():
     target = ROOT / "ckpts"
     target.mkdir(exist_ok=True)
-    for index, name in enumerate(FILES, 1):
-        print(json.dumps({"file": name, "done": index - 1, "total": len(FILES)}), flush=True)
-        hf_hub_download(REPO, name, local_dir=target)
-    print(json.dumps({"file": None, "done": len(FILES), "total": len(FILES)}), flush=True)
+    jobs = [(REPO, name, target, None) for name in FILES]
+    if "--hd" in sys.argv:
+        jobs += [(HD_REPO, name, ROOT / folder, folder) for name, folder in HD_FILES]
+    if "--hd-only" in sys.argv:
+        jobs = [(HD_REPO, name, ROOT / folder, folder) for name, folder in HD_FILES]
+    for index, (repo, name, where, folder) in enumerate(jobs, 1):
+        print(json.dumps({"file": name, "done": index - 1, "total": len(jobs)}), flush=True)
+        if folder == "loras/wan_5B":  # loras live flat in their folder, not under the repo's subfolder
+            where.mkdir(parents=True, exist_ok=True)
+            final = where / Path(name).name
+            if not final.exists():
+                Path(hf_hub_download(repo, name, local_dir=ROOT / ".lora_download")).rename(final)
+        else:
+            hf_hub_download(repo, name, local_dir=where)
+    print(json.dumps({"file": None, "done": len(jobs), "total": len(jobs)}), flush=True)
 
 
 if __name__ == "__main__":

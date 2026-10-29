@@ -1341,6 +1341,10 @@ class Wan2_2_VAE:
 
     @staticmethod
     def get_VAE_tile_size(vae_config, device_mem_capacity, mixed_precision):
+        # Apple Silicon: tiles between the two presets (256: slow, whole frame: out of GPU memory), set by the Mac port.
+        import os
+        if os.environ.get("WANGP_VAE22_TILE"):
+            return int(os.environ["WANGP_VAE22_TILE"])
         if mmgp_vram_allocator():  # no allocator fragmentation to guard against: Default and Low VRAM levels
             return 256 if vae_config == 3 or device_mem_capacity < 8000 else 512
         # VAE Tiling

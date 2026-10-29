@@ -31,6 +31,17 @@ def apply_mps_patch():
         dev_cap = (11, 0)
         bfloat16_supported = True
 
+    # Attention ends its own command buffer: a 720p video attention queued as one long GPU job left macOS without GPU time for over
+    # 90 s, and the kernel watchdog restarted the Mac. Short jobs (with the heads split in groups) keep the system responsive.
+    _sdpa = _torch.nn.functional.scaled_dot_product_attention
+
+    def _sdpa_then_flush(*args, **kwargs):
+        out = _sdpa(*args, **kwargs)
+        if out.device.type == "mps":
+            _torch.mps.synchronize()
+        return out
+
+    _torch.nn.functional.scaled_dot_product_attention = _sdpa_then_flush
     print(f"[MPS Patch] Detected: {chip_name}, {system_ram_gb:.0f}GB RAM")
     print(f"[MPS Patch] Device capability: {dev_cap}, BF16: {bfloat16_supported}")
 

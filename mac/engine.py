@@ -5,6 +5,8 @@ Presets were measured on an M5 MacBook Pro with 16 GB of memory (Wan 2.1 Text2Vi
 - "quality": 5 s at 720x416 (81 frames, 16 fps). About 7 minutes.
 - "high":    5 s at 832x480. About 12 minutes.
 - "draft":   5 s at 640x352. Faster, softer image.
+- "hd":      5 s at 960x544, 24 fps, with Wan 2.2 TI2V 5B + FastWan (3 steps). About 9 minutes, peak memory about 7 GB, much
+             sharper people and faces. Needs the extra files from `download_models.py --hd`.
 
 Speed-ups that keep the image almost unchanged: classifier-free guidance only while the scene is laid out (first phase), and
 MagCache, which reuses the model output on steps where it barely changes. Most of each step is attention, which grows with the
@@ -26,7 +28,11 @@ PRESETS = {
     "quality": {"resolution": "720x416"},
     "high": {"resolution": "832x480"},
     "draft": {"resolution": "640x352"},
+    # Wan 2.2 5B distilled to 3 steps by FastWan (no guidance). Most of the time is the Wan 2.2 decoder, which is compute bound.
+    "hd": {"model_type": "ti2v_2_2_fastwan", "resolution": "960x544", "num_inference_steps": 3, "guidance_phases": 1,
+           "guidance_scale": 1, "flow_shift": 3, "skip_steps_cache_type": ""},
 }
+FPS_BY_PRESET = {"hd": 24}
 
 BASE_SETTINGS = {
     "model_type": MODEL_TYPE,
@@ -42,10 +48,15 @@ BASE_SETTINGS = {
 }
 
 
-def frames_for(seconds):
-    """Wan works with 4n+1 frames; 5 s (81 frames) is the length the model was trained on."""
-    frames = int(round(seconds * FPS))
-    return max(17, min(81, (frames // 4) * 4 + 1))
+# Steers the model away from the defects of fast motion (smeared, see-through bodies) and toward a natural, sharp image.
+NEGATIVE_PROMPT = ("blurry, motion blur, smeared, ghosting, transparent body, deformed, distorted face, extra limbs, bad hands, "
+                   "low quality, jpeg artifacts, overexposed, static, cartoon")
+
+
+def frames_for(seconds, fps=FPS):
+    """Wan works with 4n+1 frames; 5 s is the length the models were trained on (81 frames at 16 fps, 121 at 24 fps)."""
+    frames = int(round(seconds * fps))
+    return max(17, min(5 * fps + 1, (frames // 4) * 4 + 1))
 
 
 class Engine:
@@ -61,11 +72,18 @@ class Engine:
             args.append("--offline")
         from shared.api import init  # imported late: WanGP applies the Apple Silicon patch while it loads
         self.session = init(root=ROOT, cli_args=args)
+        if sys.platform == "darwin":
+            # Attention in 16 head groups, each its own GPU job: one 720p attention queued in a single job starved macOS of GPU time
+            # long enough for the kernel watchdog to restart the Mac.
+            from shared import attention_kit
+            attention_kit.configure(3)
 
-    def generate(self, prompt, seconds=5, preset="quality", seed=-1, on_progress=None):
+    def generate(self, prompt, seconds=5, preset="quality", seed=-1, on_progress=None, negative_prompt=NEGATIVE_PROMPT):
         """Generates one video and returns its path. on_progress(phase, step, total, elapsed_seconds)."""
         settings = {**BASE_SETTINGS, **PRESETS.get(preset, PRESETS["quality"]),
-                    "prompt": prompt, "video_length": frames_for(seconds), "seed": seed}
+                    "prompt": prompt, "video_length": frames_for(seconds, FPS_BY_PRESET.get(preset, FPS)), "seed": seed}
+        if negative_prompt and settings.get("guidance_scale", 1) > 1:
+            settings["negative_prompt"] = negative_prompt
         start = time.time()
         job = self.session.submit_task(settings)
         last = None

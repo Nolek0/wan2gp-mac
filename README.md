@@ -49,7 +49,7 @@ cd wan2gp-mac
 | Option | Default | |
 |---|---|---|
 | `--seconds` | `5` | Up to 5 s. 81 frames at 16 fps is the length Wan 2.1 was trained on, and it gives the best motion. |
-| `--preset` | `quality` | `quality`: 720×416, about 7 min. `high`: 832×480, about 12 min. `draft`: 640×352, faster and softer. |
+| `--preset` | `quality` | `quality`: 720×416, about 7 min. `high`: 832×480, about 12 min. `draft`: 640×352, faster and softer. `hd`: Wan 2.2 5B, 960×544 at 24 fps, about 9–10 min. |
 | `--seed` | `-1` | A fixed number gives the same video again. |
 | `--out` | `outputs/` | Output folder. |
 | `--offline` | off | Never download anything. |
@@ -63,6 +63,9 @@ English prompts work best: the model was trained mostly on English and Chinese c
 | 5 s, 832×480 | 20 steps, full guidance, original memory handling | ~34 min (swapping) | 9.1 GB |
 | 5 s, 832×480 | `high` preset | ~12 min | 3.7 GB |
 | **5 s, 720×416** | **`quality` preset** | **~7 min** | **3.7 GB** |
+| **5 s, 960×544, 24 fps** | **`hd` preset** (Wan 2.2 5B + FastWan, `download_models.py --hd`) | **~9–10 min** | **6.8 GB** |
+
+The `hd` preset gives much more realistic people (faces, eyes, clothes). Most of its time is the Wan 2.2 decoder. Its attention runs in 16 short GPU jobs: in one long job, a 720p attention once froze macOS until the kernel watchdog restarted the Mac.
 
 The presets get their speed from settings that barely change the image:
 - **Guidance in phases.** Classifier-free guidance doubles the work of each step, so the presets keep it only while the scene is laid out (timesteps above 850) and then run a single pass per step.
