@@ -1,3 +1,108 @@
+# WanGP for Apple Silicon — local text-to-video on your Mac
+
+> **Unofficial Mac port** of [WanGP](https://github.com/deepbeepmeep/Wan2GP) by DeepBeepMeep. Not made or endorsed by DeepBeepMeep. The original README follows [below](#original-wangp-readme).
+
+Generate short videos **entirely on your Mac**: no cloud, no account, no GPU rental. This port fixes the bugs that made WanGP produce only noise or black frames on Apple Silicon. It adds a one-command setup and a small API that other apps can drive.
+
+![Frames from a video generated on an M5 MacBook Pro](mac/assets/fox-m5.jpg)
+<sub>*"A small red fox walking through fresh snow in a quiet pine forest at sunrise"*. Wan 2.1 1.3B, 832×480, generated on a 16 GB M5.</sub>
+
+![Frames from a 5-second video generated on an M5 MacBook Pro](mac/assets/cat-m5.jpg)
+<sub>*"A fluffy orange tabby cat crouches on a wooden floor in a sunny living room…"*. 5 seconds, "quality" preset, about 12 minutes on a 16 GB M5.</sub>
+
+## What was broken, and what this port fixes
+
+WanGP already had early Apple Silicon support, but every generation came out as colored noise or black frames.
+
+| Problem | Cause | Fix |
+|---|---|---|
+| Noise or black videos | The CUDA events emulated on MPS returned at once. WanGP's memory manager (mmgp) then reused host buffers the GPU had not read yet, and **overwrote the latents from the second denoising step on**. | Emulated events and streams now wait for the GPU (`shared/mps/device_patch.py`). |
+| Crash when loading a model | `cudaHostRegister` (page locking) does not exist on macOS. | No locking on macOS, where CPU and GPU share the same memory anyway (`mmgp/pinned.py`). |
+| Crash in the MLP kernels | WanGP reads `L2_cache_size` and other CUDA device properties. | The emulated device reports them. |
+
+Each fix was checked layer by layer: the transformer output on MPS matches the CPU output and the official Diffusers implementation of Wan 2.1 (cosine similarity 0.9999). The scheduler, text encoder and VAE were checked the same way. The full list of changes, with dates, is in [`CHANGES-MAC.md`](CHANGES-MAC.md).
+
+## Requirements
+
+- A Mac with **Apple Silicon** (M1 or later) and **16 GB of memory or more**.
+- About **13 GB of disk**: ~3 GB for the Python environment and ~10 GB for the model files.
+- Tested on an **M5 with 16 GB** and macOS 27. M1 and M2 have no BF16 support, so WanGP switches to FP16 there; that path is untested.
+
+## Install
+
+```bash
+git clone https://github.com/Nolek0/wan2gp-mac.git
+cd wan2gp-mac
+./mac/setup.sh
+```
+
+`setup.sh` installs [uv](https://github.com/astral-sh/uv) if needed and creates a Python 3.11 environment with PyTorch. It then downloads **only** the files the 1.3B text-to-video model needs: the transformer, the int8 text encoder and the VAE. WanGP's automatic download would also fetch about 2.7 GB of image-to-video files, which you skip here.
+
+## Generate
+
+```bash
+.venv/bin/python mac/generate.py "A cat jumps onto a sofa in a sunny living room" --offline
+```
+
+| Option | Default | |
+|---|---|---|
+| `--seconds` | `5` | Up to 5 s. 81 frames at 16 fps is the length Wan 2.1 was trained on, and it gives the best motion. |
+| `--preset` | `quality` | `quality`: 832×480. `draft`: 640×352, faster and softer. |
+| `--seed` | `-1` | A fixed number gives the same video again. |
+| `--out` | `outputs/` | Output folder. |
+| `--offline` | off | Never download anything. |
+
+English prompts work best: the model was trained mostly on English and Chinese captions.
+
+### Measured times (M5, 16 GB)
+
+| Video | Settings | Time |
+|---|---|---|
+| 2 s, 832×480 | 20 steps, full guidance | ~7 min |
+| 5 s, 832×480 | 20 steps, full guidance | ~34 min (the Mac ran out of memory and swapped) |
+| **5 s, 832×480** | **`quality` preset** | **~12 min**, nearly identical image (mean difference 3/255) |
+
+The `quality` preset gets its speed from two settings that barely change the image:
+- **Guidance in phases.** Classifier-free guidance doubles the work of each step, so the preset keeps it only while the scene is laid out (timesteps above 800) and then runs a single pass per step.
+- **MagCache.** It reuses the model output on steps where it barely changes, which skips about half of them.
+
+Peak memory is about 9 GB, so close other heavy apps on a 16 GB Mac. With more memory, expect it to go faster.
+
+## Use it from your own app
+
+`mac/serve.py` is a local JSON-lines service: one request per line on stdin, one reply per line on stdout. The model loads once and stays in memory between videos.
+
+```bash
+.venv/bin/python mac/serve.py --offline --output-dir ~/Movies/WanGP
+```
+```json
+{"id": "1", "cmd": "generate", "prompt": "A red fox in the snow", "seconds": 5, "preset": "quality"}
+```
+```json
+{"id": "1", "event": "progress", "phase": "inference", "step": 4, "total": 20, "elapsed": 210.5}
+{"id": "1", "event": "done", "path": "/Users/you/Movies/WanGP/….mp4", "seconds": 702.1}
+```
+
+In Python, use `mac/engine.py`:
+
+```python
+from engine import Engine
+path = Engine(offline=True).generate("A red fox in the snow", seconds=5, preset="quality")
+```
+
+[NOVA](https://github.com/Nolek0/nova), a free local AI app, uses this service for its video generation.
+
+## Credits and license
+
+- **[WanGP](https://github.com/deepbeepmeep/Wan2GP)** by **DeepBeepMeep**: the generation app, memory manager and Apple Silicon groundwork this port builds on. Licensed under the **WanGP Community License 2.0** (`LICENSE.txt`). This port is redistributed for free use under its section 4. It may not be sold, embedded in a paid product or offered as a paid service without a license from DeepBeepMeep.
+- **[Wan 2.1](https://github.com/Wan-Video/Wan2.1)** by the Wan team at Alibaba: the video model (Apache-2.0).
+- The early MPS port in WanGP is by *huangyebiaoke*, with testing by *cn0ss* and *SquishedSquirrel*.
+- Mac fixes, setup and service by [Nolek0](https://github.com/Nolek0), 2026-10-29.
+
+---
+
+# Original WanGP README
+
 # WanGP
 
 -----

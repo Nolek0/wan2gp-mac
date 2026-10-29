@@ -36,6 +36,8 @@ _by_kind = collections.Counter()
 _failures = {} # keep backing allocations alive after an unregister/synchronization failure
 _retired = [] # owners whose registrations collect() closes at the next quiet point
 _registrar = None
+# Apple Silicon (MPS): CPU and GPU share the same memory, there is nothing to lock for the GPU and no CUDA runtime.
+NO_CUDA_HOST = sys.platform == "darwin"
 
 
 class Registration:
@@ -52,7 +54,7 @@ class Registration:
         with self.guard:
             if self.registered:
                 raise RuntimeError("Host memory is already registered")
-            error = torch.cuda.cudart().cudaHostRegister(self.pointer, self.size, self.flags)
+            error = 0 if NO_CUDA_HOST else torch.cuda.cudart().cudaHostRegister(self.pointer, self.size, self.flags)
             if int(error) == 0:
                 self.registered = True
                 with _bytes_lock:
@@ -68,9 +70,12 @@ class Registration:
             if self.error is not None:
                 return False # never retry a failed driver operation from a finalizer
             try:
-                if self.is_finalizing():
+                if NO_CUDA_HOST:
+                    pass
+                elif self.is_finalizing():
                     raise RuntimeError("Python is shutting down")
-                with torch.cuda.device(self.device):
+                else:
+                  with torch.cuda.device(self.device):
                     torch.cuda.synchronize(self.device)
                     error = torch.cuda.cudart().cudaHostUnregister(self.pointer)
                     if int(error) != 0:
@@ -131,6 +136,9 @@ def account(nbytes, kind):
 def lock(buffer, pointer, size, kind, flags=0):
     """The registration of size bytes at pointer (buffer keeps them alive), made on the registration thread; None if refused."""
     global _registrar
+    if NO_CUDA_HOST:
+        registration = Registration(buffer, pointer, size, 0, flags, kind)
+        return registration if int(registration.register()) == 0 else None
     if _registrar is None:
         _registrar = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mmgp_pinned", initializer=torch.cuda.set_device, initargs=(torch.cuda.current_device(),))
     registration = Registration(buffer, pointer, size, torch.cuda.current_device(), flags, kind)

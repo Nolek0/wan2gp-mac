@@ -37,8 +37,9 @@ def apply_mps_patch():
     # Dummy objects
     _dummy_stream = types.SimpleNamespace(
         synchronize=_torch.mps.synchronize,
-        wait_stream=lambda *a, **kw: None,
-        query=lambda: True,
+        wait_stream=lambda *a, **kw: _torch.mps.synchronize(),
+        wait_event=lambda *a, **kw: _torch.mps.synchronize(),
+        query=lambda: _torch.mps.synchronize() or True,
         priority=0,
     )
 
@@ -51,13 +52,19 @@ def apply_mps_patch():
             _torch.cuda._device_props_cache = self
         multi_processor_count = 0
         warp_size = 32
+        # Apple Silicon has no CUDA L2 figure; a typical SoC cache size keeps the chunking heuristics sensible.
+        L2_cache_size = 16 * 1024 * 1024
+        shared_memory_per_block_optin = 32 * 1024
+        gcnArchName = ""
 
     class _DummyEvent:
         def __init__(self, *a, **kw): pass
+        # mmgp reuses host buffers once an event says the GPU is done with them: waiting for real keeps the latents intact.
         def record(self, *a, **kw): pass
         def elapsed_time(self, *a, **kw): return 0.0
-        def synchronize(self, *a, **kw): pass
-        def query(self): return True
+        def synchronize(self, *a, **kw): _torch.mps.synchronize()
+        def wait(self, *a, **kw): _torch.mps.synchronize()
+        def query(self): _torch.mps.synchronize(); return True
 
     class _DummyDeviceContext:
         def __init__(self, device=None): pass
@@ -125,9 +132,11 @@ def apply_mps_patch():
     class _PatchedStream:
         priority = 0
         def __init__(self, *a, **kw): pass
-        def synchronize(self, *a, **kw): pass
-        def wait_stream(self, *a, **kw): pass
-        def query(self): return True
+        def synchronize(self, *a, **kw): _torch.mps.synchronize()
+        def wait_stream(self, *a, **kw): _torch.mps.synchronize()
+        def wait_event(self, *a, **kw): _torch.mps.synchronize()
+        def record_event(self, event=None, *a, **kw): return event if event is not None else _DummyEvent()
+        def query(self): _torch.mps.synchronize(); return True
 
     _cuda.Stream = _PatchedStream
     _cuda.stream = lambda s: _DummyStreamContext(s)
