@@ -46,6 +46,45 @@ from .wanmove.trajectory import replace_feature, create_pos_feature_map
 from .alpha.utils import load_gauss_mask, apply_alpha_shift
 from shared.utils.audio_video import save_video
 from shared.utils.text_encoder_cache import TextEncoderCache
+
+
+class OnDemandT5:
+    """umT5 loaded only while it encodes prompts, then released: on Apple Silicon its 6 GB would otherwise stay in the shared memory."""
+
+    model = None  # nothing for mmgp to manage
+
+    def __init__(self, t5_args):
+        self.t5_args = t5_args
+
+    @staticmethod
+    def _encode_streaming(encoder, texts, device):
+        """Runs the encoder one block at a time on the GPU, then throws the block away (the encoder is discarded after this call):
+        only one block (~250 MB) is in GPU memory at once, and the GPU still does the math (the CPU alone takes minutes)."""
+        m = encoder.model
+        ids, mask = encoder.tokenizer(texts, return_mask=True, add_special_tokens=True)
+        seq_lens = mask.gt(0).sum(dim=1).long()
+        x = m.token_embedding(ids).to(device)
+        mask = mask.to(device)
+        e = m.pos_embedding.to(device)(x.size(1), x.size(1)) if m.shared_pos else None
+        for i in range(len(m.blocks)):
+            block = m.blocks[i].to(device)
+            x = block(x, mask, pos_bias=e)
+            m.blocks[i] = torch.nn.Identity()
+            del block
+        x = m.norm.to(device)(x)
+        return [u[:v].detach().clone() for u, v in zip(x, seq_lens)]
+
+    def __call__(self, texts, device):
+        import gc
+        encoder = T5EncoderModel(**self.t5_args)
+        try:
+            with torch.no_grad():
+                return self._encode_streaming(encoder, texts, device)
+        finally:
+            del encoder
+            gc.collect()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
 from shared.utils.phase_progress import control_video_encoding, generation_progress, text_encoding_prompts
 from shared.utils.self_refiner import PnPHandler, create_self_refiner_handler
 from mmgp import safetensors2
@@ -124,7 +163,10 @@ class WanAny2V:
                 tokenizer_path = os.path.dirname(fl.locate_file(os.path.join(text_encoder_folder, "tokenizer_config.json")))
             else:
                 tokenizer_path = os.path.dirname(text_encoder_filename)
-            self.text_encoder = T5EncoderModel(text_len=config.text_len, dtype=config.t5_dtype, device=torch.device('cpu'), checkpoint_path=text_encoder_filename, tokenizer_path=tokenizer_path)
+            t5_args = dict(text_len=config.text_len, dtype=config.t5_dtype, device=torch.device('cpu'), checkpoint_path=text_encoder_filename, tokenizer_path=tokenizer_path)
+            # Apple Silicon: CPU and GPU share the same memory, so a resident 6 GB text encoder takes it away from the denoising for the
+            # whole video. It is loaded for each new prompt and released right after (prompts already encoded come from the cache).
+            self.text_encoder = OnDemandT5(t5_args) if torch.backends.mps.is_available() else T5EncoderModel(**t5_args)
             self.text_encoder_cache = TextEncoderCache()
         if hasattr(config, "clip_checkpoint") and not model_def.get("i2v_2_2", False) or base_model_type in ["animate"]:
             self.clip = CLIPModel(

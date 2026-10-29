@@ -5,10 +5,13 @@
     python mac/generate.py "A cat jumps onto a sofa" --seconds 5 --preset draft --seed 42 --out ~/Movies
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+if "--offline" in sys.argv:  # before any Hugging Face library loads: WanGP never downloads, a missing file is an error
+    os.environ["HF_HUB_OFFLINE"] = "1"
 from engine import Engine  # noqa: E402
 
 
@@ -16,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description="Text-to-video on Apple Silicon (Wan 2.1 1.3B through WanGP).")
     parser.add_argument("prompt", help="what the video shows (English works best)")
     parser.add_argument("--seconds", type=float, default=5, help="video length, up to 5 s (default 5)")
-    parser.add_argument("--preset", choices=["quality", "draft"], default="quality")
+    parser.add_argument("--preset", choices=["quality", "high", "draft"], default="quality")
     parser.add_argument("--seed", type=int, default=-1, help="-1 for a random seed")
     parser.add_argument("--out", default=None, help="output folder (default: outputs/)")
     parser.add_argument("--offline", action="store_true", help="never download anything")

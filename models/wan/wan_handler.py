@@ -1018,11 +1018,15 @@ class family_handler():
             wan_files = ["Wan2.1_VAE.safetensors", "Wan2.1_VAE_upscale2x_imageonly_real_v1.safetensors"]
             if base_model_type in ["fantasy"]:
                 wan_files.append("fantasy_proj_model.safetensors")
-            download_def += [{
-                "repoId" : "DeepBeepMeep/Wan2.1", 
-                "sourceFolderList" :  ["xlm-roberta-large", ""  ],
-                "fileList" : [ [ "models_clip_open-clip-xlm-roberta-large-vit-huge-14-bf16.safetensors", "sentencepiece.bpe.model", "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json"], wan_files ]   
-            }]
+            if base_model_type in ["t2v", "t2v_1.3B"]:
+                # Plain text-to-video uses neither the CLIP image encoder nor the image-only upscaling VAE (2.9 GB not downloaded).
+                download_def += [{"repoId": "DeepBeepMeep/Wan2.1", "sourceFolderList": [""], "fileList": [["Wan2.1_VAE.safetensors"]]}]
+            else:
+                download_def += [{
+                    "repoId" : "DeepBeepMeep/Wan2.1", 
+                    "sourceFolderList" :  ["xlm-roberta-large", ""  ],
+                    "fileList" : [ [ "models_clip_open-clip-xlm-roberta-large-vit-huge-14-bf16.safetensors", "sentencepiece.bpe.model", "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json"], wan_files ]   
+                }]
 
         if base_model_type == "scail" or test_scail2(base_model_type):
             download_def += [
@@ -1126,7 +1130,7 @@ class family_handler():
             if wan_model.kiwi_mllm.encoder is None:
                 raise RuntimeError("Kiwi MLLM encoder failed to load.")
             pipe["text_encoder"] = wan_model.kiwi_mllm.encoder
-        else:
+        elif wan_model.text_encoder.model is not None:  # None: the text encoder is loaded on demand (Apple Silicon)
             pipe["text_encoder"] = wan_model.text_encoder.model
         if wan_model.vae2 is not None:
             pipe["vae2"] = wan_model.vae2.model             

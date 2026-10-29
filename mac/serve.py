@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+if "--offline" in sys.argv:  # before any Hugging Face library loads: WanGP never downloads, a missing file is an error
+    os.environ["HF_HUB_OFFLINE"] = "1"
 # The JSON replies get a private copy of stdout; everything else that writes to stdout (WanGP, C libraries) goes to stderr.
 OUT = os.fdopen(os.dup(1), "w", buffering=1)
 os.dup2(2, 1)

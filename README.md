@@ -8,7 +8,7 @@ Generate short videos **entirely on your Mac**: no cloud, no account, no GPU ren
 <sub>*"A small red fox walking through fresh snow in a quiet pine forest at sunrise"*. Wan 2.1 1.3B, 832×480, generated on a 16 GB M5.</sub>
 
 ![Frames from a 5-second video generated on an M5 MacBook Pro](mac/assets/cat-m5.jpg)
-<sub>*"A fluffy orange tabby cat crouches on a wooden floor in a sunny living room…"*. 5 seconds, "quality" preset, about 12 minutes on a 16 GB M5.</sub>
+<sub>*"A fluffy orange tabby cat crouches on a wooden floor in a sunny living room…"*. 5 seconds at 832×480 ("high" preset), about 12 minutes on a 16 GB M5.</sub>
 
 ## What was broken, and what this port fixes
 
@@ -19,6 +19,7 @@ WanGP already had early Apple Silicon support, but every generation came out as 
 | Noise or black videos | The CUDA events emulated on MPS returned at once. WanGP's memory manager (mmgp) then reused host buffers the GPU had not read yet, and **overwrote the latents from the second denoising step on**. | Emulated events and streams now wait for the GPU (`shared/mps/device_patch.py`). |
 | Crash when loading a model | `cudaHostRegister` (page locking) does not exist on macOS. | No locking on macOS, where CPU and GPU share the same memory anyway (`mmgp/pinned.py`). |
 | Crash in the MLP kernels | WanGP reads `L2_cache_size` and other CUDA device properties. | The emulated device reports them. |
+| 9 GB memory peak, heavy swapping on 16 GB Macs | CPU and GPU share the same memory, so the 6 GB text encoder kept "in RAM" took memory away from the GPU for the whole video. The decoder also picked 512-pixel tiles, as if the GPU had all 16 GB to itself. | The text encoder is loaded only to read a new prompt (block by block on the GPU, about 4 s) and released right after. Decoding uses 256-pixel tiles. **Peak memory: 3.7 GB** instead of 9.1 GB, at the same speed. |
 
 Each fix was checked layer by layer: the transformer output on MPS matches the CPU output and the official Diffusers implementation of Wan 2.1 (cosine similarity 0.9999). The scheduler, text encoder and VAE were checked the same way. The full list of changes, with dates, is in [`CHANGES-MAC.md`](CHANGES-MAC.md).
 
@@ -26,6 +27,7 @@ Each fix was checked layer by layer: the transformer output on MPS matches the C
 
 - A Mac with **Apple Silicon** (M1 or later) and **16 GB of memory or more**.
 - About **13 GB of disk**: ~3 GB for the Python environment and ~10 GB for the model files.
+- Generation uses **under 4 GB of memory**, so a 16 GB Mac keeps working normally meanwhile.
 - Tested on an **M5 with 16 GB** and macOS 27. M1 and M2 have no BF16 support, so WanGP switches to FP16 there; that path is untested.
 
 ## Install
@@ -47,7 +49,7 @@ cd wan2gp-mac
 | Option | Default | |
 |---|---|---|
 | `--seconds` | `5` | Up to 5 s. 81 frames at 16 fps is the length Wan 2.1 was trained on, and it gives the best motion. |
-| `--preset` | `quality` | `quality`: 832×480. `draft`: 640×352, faster and softer. |
+| `--preset` | `quality` | `quality`: 720×416, about 7 min. `high`: 832×480, about 12 min. `draft`: 640×352, faster and softer. |
 | `--seed` | `-1` | A fixed number gives the same video again. |
 | `--out` | `outputs/` | Output folder. |
 | `--offline` | off | Never download anything. |
@@ -56,17 +58,16 @@ English prompts work best: the model was trained mostly on English and Chinese c
 
 ### Measured times (M5, 16 GB)
 
-| Video | Settings | Time |
-|---|---|---|
-| 2 s, 832×480 | 20 steps, full guidance | ~7 min |
-| 5 s, 832×480 | 20 steps, full guidance | ~34 min (the Mac ran out of memory and swapped) |
-| **5 s, 832×480** | **`quality` preset** | **~12 min**, nearly identical image (mean difference 3/255) |
+| Video | Settings | Time | Peak memory |
+|---|---|---|---|
+| 5 s, 832×480 | 20 steps, full guidance, original memory handling | ~34 min (swapping) | 9.1 GB |
+| 5 s, 832×480 | `high` preset | ~12 min | 3.7 GB |
+| **5 s, 720×416** | **`quality` preset** | **~7 min** | **3.7 GB** |
 
-The `quality` preset gets its speed from two settings that barely change the image:
-- **Guidance in phases.** Classifier-free guidance doubles the work of each step, so the preset keeps it only while the scene is laid out (timesteps above 800) and then runs a single pass per step.
+The presets get their speed from settings that barely change the image:
+- **Guidance in phases.** Classifier-free guidance doubles the work of each step, so the presets keep it only while the scene is laid out (timesteps above 850) and then run a single pass per step.
 - **MagCache.** It reuses the model output on steps where it barely changes, which skips about half of them.
-
-Peak memory is about 9 GB, so close other heavy apps on a 16 GB Mac. With more memory, expect it to go faster.
+- **720×416.** Attention takes about 94 % of each step and grows with the square of the pixel count, so this resolution costs about half of 832×480. In side-by-side tests it looked as sharp.
 
 ## Use it from your own app
 

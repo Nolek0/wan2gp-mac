@@ -1,12 +1,14 @@
 # Mac port of WanGP - part of WanGP, WanGP Community License 2.0 (see LICENSE.txt). Added 2026-10-29.
 """Text-to-video on Apple Silicon with WanGP, as a small Python API.
 
-Presets were measured on an M5 MacBook Pro with 16 GB of memory (Wan 2.1 Text2Video 1.3B):
-- "quality": 5 s at 832x480 (81 frames, 16 fps). About 12 minutes.
+Presets were measured on an M5 MacBook Pro with 16 GB of memory (Wan 2.1 Text2Video 1.3B), peak memory about 3.7 GB:
+- "quality": 5 s at 720x416 (81 frames, 16 fps). About 7 minutes.
+- "high":    5 s at 832x480. About 12 minutes.
 - "draft":   5 s at 640x352. Faster, softer image.
 
 Speed-ups that keep the image almost unchanged: classifier-free guidance only while the scene is laid out (first phase), and
-MagCache, which reuses the model output on steps where it barely changes.
+MagCache, which reuses the model output on steps where it barely changes. Most of each step is attention, which grows with the
+square of the pixel count, so 720x416 costs about half of 832x480.
 """
 import shutil
 import sys
@@ -21,7 +23,8 @@ MODEL_TYPE = "t2v_1.3B"
 FPS = 16
 
 PRESETS = {
-    "quality": {"resolution": "832x480"},
+    "quality": {"resolution": "720x416"},
+    "high": {"resolution": "832x480"},
     "draft": {"resolution": "640x352"},
 }
 
@@ -31,11 +34,11 @@ BASE_SETTINGS = {
     "guidance_phases": 2,          # guidance while the scene is laid out, then a single pass per step
     "guidance_scale": 5,
     "guidance2_scale": 1,
-    "switch_threshold": 800,
+    "switch_threshold": 850,
     "flow_shift": 5,
     "skip_steps_cache_type": "mag",
-    "skip_steps_multiplier": 2.0,
-    "skip_steps_start_step_perc": 20,
+    "skip_steps_multiplier": 2.25,
+    "skip_steps_start_step_perc": 10,
 }
 
 
@@ -51,7 +54,9 @@ class Engine:
     def __init__(self, output_dir=None, offline=False, log=None):
         self.log = log or (lambda text: None)
         self.output_dir = Path(output_dir).expanduser() if output_dir else None
-        args = ["--attention", "sdpa"]
+        # --vae-config 2: 256-pixel decoding tiles. WanGP sizes them from the GPU memory, which on a Mac is the whole RAM, and the
+        # larger tiles more than doubled the peak memory (8.6 GB instead of 3.4 GB) for the same decoding time.
+        args = ["--attention", "sdpa", "--vae-config", "2"]
         if offline:
             args.append("--offline")
         from shared.api import init  # imported late: WanGP applies the Apple Silicon patch while it loads
