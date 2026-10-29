@@ -19,7 +19,7 @@ echo "[2/4] Creating the Python 3.11 environment..."
 [ -d .venv ] || "$UV" venv --python 3.11 .venv
 
 echo "[3/4] Installing PyTorch and WanGP's dependencies (a few minutes)..."
-VIRTUAL_ENV=.venv "$UV" pip install torch torchvision torchaudio
+VIRTUAL_ENV=.venv "$UV" pip install torch==2.15.0 torchvision==0.29.2 torchaudio==2.11.1  # versions tested on Apple Silicon
 VIRTUAL_ENV=.venv "$UV" pip install -r mac/requirements-mac.txt
 
 if [ "${1:-}" != "--no-models" ]; then
